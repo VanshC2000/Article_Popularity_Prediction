@@ -1,0 +1,436 @@
+---
+title: "Machine Learning Project - Mashable"
+author: "Vansh Chandwaney"
+date: "2023-10-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Case Objective and Data Description
+
+The objective of this report is to predict the popularity of articles posted on Mashable, a renowned news website and entertainment company, by analyzing different predictive models. The focus is on automating the selection process of articles based on their potential to generate high shares, which directly impacts revenue.
+
+The public dataset used in this analysis has details of 39645 articles posted on Mashable. Broadly, this dataset contained information about keywords used, data channels, the day of posting, hyperlinks, the language used, overall sentiment and the total shares for each article. There were 60 possible metrics in the dataset that could have been used to predict shares.
+
+# Loading necessary libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(caret)
+library(tidyverse)
+library(rpart.plot)
+library(xgboost)
+library(randomForest)
+library(e1071)
+library(pROC)
+```
+
+# Loading the dataset
+
+```{r}
+mashable_data <- read.csv("OnlineNewsPopularity.csv")
+View(mashable_data)
+```
+
+# Exploratory Data Analysis (EDA)
+
+## Summarising the data and checking for missing values
+
+```{r}
+summary(mashable_data)
+sum(is.na(mashable_data))
+```
+
+## Checking data types of each column
+
+```{r}
+column_data_types <- sapply(mashable_data, class)
+column_data_types
+```
+
+## Creating a histogram of Article Shares
+
+This would help visually visually illustrate the distribution of article shares, providing insights into the overall engagement levels of the content posted on Mashable.
+
+```{r}
+# Define the 95th percentile threshold
+threshold <- quantile(mashable_data$shares, 0.95)
+
+# Filter the dataset to exclude the top 5% extreme outliers
+filtered_data <- mashable_data %>% filter(shares <= threshold)
+
+# Histogram of shares excluding extreme outliers
+ggplot(filtered_data, aes(x = shares)) +
+  geom_histogram(binwidth = 500, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Distribution of Shares (Excluding Extreme Outliers)", x = "Shares", y = "Frequency")
+```
+
+## Changing data types of dummy variables to "factor"
+
+```{r}
+mashable_data$weekday_is_monday <- as.factor(mashable_data$weekday_is_monday)
+mashable_data$weekday_is_tuesday <- as.factor(mashable_data$weekday_is_tuesday)
+mashable_data$weekday_is_wednesday <- as.factor(mashable_data$weekday_is_wednesday)
+mashable_data$weekday_is_thursday <- as.factor(mashable_data$weekday_is_thursday)
+mashable_data$weekday_is_friday <- as.factor(mashable_data$weekday_is_friday)
+mashable_data$weekday_is_saturday <- as.factor(mashable_data$weekday_is_saturday)
+mashable_data$weekday_is_sunday <- as.factor(mashable_data$weekday_is_sunday)
+mashable_data$is_weekend <- as.factor(mashable_data$is_weekend)
+mashable_data$data_channel_is_bus <- as.factor(mashable_data$data_channel_is_bus)
+mashable_data$data_channel_is_lifestyle <- as.factor(mashable_data$data_channel_is_lifestyle)
+mashable_data$data_channel_is_entertainment <- as.factor(mashable_data$data_channel_is_entertainment)
+mashable_data$data_channel_is_socmed <- as.factor(mashable_data$data_channel_is_socmed)
+mashable_data$data_channel_is_tech <- as.factor(mashable_data$data_channel_is_tech)
+mashable_data$data_channel_is_world <- as.factor(mashable_data$data_channel_is_world)
+```
+
+## Visualizing average shares by day of the week
+
+```{r}
+# Calculate average shares by day of the week
+avg_shares_by_day <- data.frame(
+  weekday = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+  avg_shares = c(
+    mean(mashable_data$shares[mashable_data$weekday_is_monday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_tuesday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_wednesday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_thursday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_friday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_saturday == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$weekday_is_sunday == 1], na.rm = TRUE)
+  )
+)
+
+# Bar plot of average shares by day of the week with gradient colors based on size
+ggplot(avg_shares_by_day, aes(x = weekday, y = avg_shares, fill = avg_shares)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Average Shares by Day of the Week", x = "Day of the Week", y = "Average Shares") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+The visualization above presents the average article shares by day of the week. The highest shares were on Saturday, Sunday and Monday, and the rest of the days had negligible differences.
+
+## Visualizing average shares by data channel
+
+```{r}
+# Calculate average shares by data channel
+avg_shares_by_channel <- data.frame(
+  data_channel = c("Bus", "Lifestyle", "Entertainment", "Socmed", "Tech", "World"),
+  avg_shares = c(
+    mean(mashable_data$shares[mashable_data$data_channel_is_bus == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$data_channel_is_lifestyle == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$data_channel_is_entertainment == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$data_channel_is_socmed == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$data_channel_is_tech == 1], na.rm = TRUE),
+    mean(mashable_data$shares[mashable_data$data_channel_is_world == 1], na.rm = TRUE)
+  )
+)
+
+# Bar plot of average shares by data channel with gradient colors based on size
+ggplot(avg_shares_by_channel, aes(x = data_channel, y = avg_shares, fill = avg_shares)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient(low = "lightgreen", high = "darkgreen") +
+  labs(title = "Average Shares by Data Channel", x = "Data Channel", y = "Average Shares") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+The visualization above presents the impact of data channels on number of article shares. Articles related to Lifestyle and Social Media had the highest average shares, while Tech and World News-related articles had the lowest average shares.
+
+# 2. Data Pre-Processing
+
+## Removing columns "timedelta" and "url"
+
+```{r}
+# This is because they do not contribute to predicting shares
+library(dplyr)
+mashable_data <- mashable_data %>%
+  select(-timedelta, -url)
+```
+
+## Removing features from the dataset based on knowledge of the digital media industry
+
+```{r}
+mashable_data <- mashable_data %>%
+  select(-average_token_length, -kw_min_min, -kw_max_min, -kw_min_max, -kw_max_max, -min_positive_polarity, -max_positive_polarity, -min_negative_polarity, -max_negative_polarity, -is_weekend, -self_reference_min_shares, -self_reference_max_shares)
+```
+
+## Splitting data into test and train sets
+
+```{r}
+dataset_split <- sample(c(TRUE, FALSE), nrow(mashable_data), replace=TRUE, prob=c(0.75,0.25))
+train <- mashable_data[dataset_split, ]
+test <- mashable_data[!dataset_split, ]
+```
+
+# Developing Predictive Models
+
+## Performing linear regression
+
+```{r}
+linear_reg_model <- lm(shares ~ ., data = train)
+summary(linear_reg_model)
+```
+
+Since the r\^2 of the linear regression model was low, a feature selection method will be used to run a new linear regression model with less variables that are more relevant.
+
+```{r}
+# Subsetting mashable_data without binary variables related to day of week and data channel for the purpose of feature selection. These will be added back later for the second linear regression model as these attributes do affect shares of an article, as is seen in the earlier in the visualisations. 
+
+data_for_feature_sel <- mashable_data[, c(1:10, 17:22, 30:46)]
+```
+
+## Using XGBoost to establish feature importance, with nrounds as 100 and 200
+
+```{r}
+# Importance scores will be assessed with nrounds set to 100 and 200
+library(caret)
+library(tidyverse)
+library(rpart.plot)
+library(xgboost)
+
+xgb_model_100 <- xgboost(data = data.matrix(data_for_feature_sel),
+                     label = mashable_data[, 47],
+                     nrounds = 100,           
+                     objective = "reg:squarederror") 
+
+xgb_model_200 <- xgboost(data = data.matrix(data_for_feature_sel),
+                     label = mashable_data[, 47],
+                     nrounds = 200,           
+                     objective = "reg:squarederror") 
+
+```
+
+## Checking importance scores
+
+```{r}
+importance_scores_100 <- xgb.importance(model = xgb_model_100) # https://www.projectpro.io/recipes/visualise-xgboost-feature-importance-r was used as a reference for this code.  
+head(importance_scores_100, 10)
+cat("Total gain of top 10 variables using XGBoost with 100 boosting rounds is", sum(importance_scores_100$Gain[1:10]), "\n")
+
+importance_scores_200 <- xgb.importance(model = xgb_model_200) # https://www.projectpro.io/recipes/visualise-xgboost-feature-importance-r was used as a reference for this code.  
+head(importance_scores_200, 10)
+cat("Total gain of top 10 variables using XGBoost with 200 boosting rounds is",sum(importance_scores_200$Gain[1:10]))
+```
+
+The total gain for the top 10 variables as the boosting rounds increases from 100 to 200, decreases from 0.694 to 0.674. This may indicate overfitting due to the higher complexity of the model. Hence, the model with 100 boosting rounds will be used.
+
+## Selecting variables that have a gain of more than 0.05 (the variables that have a contribution to the model that is greater than 5%)
+
+```{r}
+xgb_selected_variables<- importance_scores_100[importance_scores_100$Gain>0.05, 1]
+```
+
+## Creating new testing and training datasets
+
+```{r}
+# keeping only relevant variables in the training and testing dataset. The dummy variables for day of the week and data channels have been added back. 
+training_data_new<-train[,c(11:16, 23:29, 22, 3, 20, 2, 1, 5, 17, 18, 21, 47)]
+testing_data_new<-test[,c(11:16, 23:29, 22, 3, 20, 2, 1, 5, 17, 18, 21, 47)]
+```
+
+## Conducting multiple linear regression
+
+```{r}
+linear_reg_model_2 <- lm(shares ~ ., data = training_data_new)
+summary(linear_reg_model_2)
+```
+
+Due to a poor r\^2 even after feature selection, the linear regression model will not be used for analysis.
+
+## Logistic regression: classifying popularity
+
+As direct predictions for popularity were inaccurate (possibly due to features outside the dataset that would affect shares), classification models were used for analysis. The models discussed hereafter will thus attempt to predict whether or not an article would have a high number of shares, rather than predicting the number of shares generated. To go ahead with this analysis, all articles that were shared more than 1000 times were classified as 'Popular' and all articles that had \<1000 shares were deemed 'Unpopular'.
+
+```{r}
+train$is_popular<- ifelse(train$shares>1000, 1, 0)
+test$is_popular<- ifelse(test$shares>1000, 1, 0)
+train$is_popular<-as.factor(train$is_popular)
+test$is_popular<-as.factor(test$is_popular)
+```
+
+## Preparing data for classification models
+
+```{r}
+data_for_logistic_reg<- mashable_data
+data_for_logistic_reg$is_popular<- ifelse(data_for_logistic_reg$shares>1000, 1, 0)
+data_for_logistic_reg$is_popular<-as.factor(data_for_logistic_reg$is_popular)
+data_for_logistic_reg <- data_for_logistic_reg %>%
+  select(-shares)
+
+# Splitting data into test and train
+set.seed(50)
+test_train_split_log <- sample(c(TRUE, FALSE), nrow(data_for_logistic_reg), replace=TRUE, prob=c(0.75,0.25))
+log_training_data <- data_for_logistic_reg[test_train_split_log, ]
+log_testing_data <- data_for_logistic_reg[!test_train_split_log, ]
+```
+
+## Performing logistic regression with 46 independent variables
+
+```{r}
+logistic_reg_model <- glm(is_popular ~ ., data = log_training_data, family = binomial)
+summary(logistic_reg_model)
+```
+
+## Assessing the model's predictive ability
+
+```{r}
+library(caret)
+
+predicted_prob <- predict(logistic_reg_model, newdata = log_training_data, type = "response") # this code was taken from ChatGPT
+accuracy <- mean(predicted_prob >= 0.5)  # Assuming a threshold of 0.5 for binary classification. this code was taken from ChatGPT
+cat("The accuracy rate of this model is", accuracy*100, "%")
+```
+
+## Performing logistic regression model with 9 independent variables selected using XGBoost
+
+```{r}
+# Preparing data
+data_for_logistic_reg2<- data_for_logistic_reg
+data_for_logistic_reg2 <- data_for_logistic_reg2 %>%
+  select(self_reference_avg_sharess, n_unique_tokens, n_tokens_content, kw_max_avg, n_tokens_title, n_non_stop_unique_tokens, kw_avg_min, kw_avg_max, kw_avg_avg, is_popular)
+```
+
+## Creating new testing and training datasets
+
+```{r}
+set.seed(52)
+test_train_split_log_2 <- sample(c(TRUE, FALSE), nrow(data_for_logistic_reg2), replace=TRUE, prob=c(0.75,0.25))
+log_training_data_2 <- data_for_logistic_reg2[test_train_split_log_2, ]
+log_testing_data_2 <- data_for_logistic_reg2[!test_train_split_log_2, ]
+```
+
+## Performing logistic regression
+
+```{r}
+logistic_reg_model_2 <- glm(is_popular ~ ., data = log_training_data_2, family = binomial)
+summary(logistic_reg_model_2)
+```
+
+## Assessing the second model's performance
+
+```{r}
+predicted_prob_2 <- predict(logistic_reg_model_2, newdata = log_training_data_2, type = "response") 
+accuracy_2 <- mean(predicted_prob_2 >= 0.5)
+cat("The accuracy rate of this model is", accuracy_2*100, "%")
+```
+
+## Developing a random forest model
+
+```{r}
+# Using log_training_data as it has 46 variables independent variables and "is_popular" as the binary target variable
+library(randomForest)
+rf_model <- randomForest(is_popular ~ ., data = log_training_data, ntree = 500) # https://cran.r-project.org/web/packages/randomForest/randomForest.pdf was used to understand Random Forest and implement the code
+rf_model
+```
+
+## Developing a second random forest model with only the variables suggested by XGBoost
+
+```{r}
+# Using log_training_data_2 as it has the 9 independent variables suggested by XGboost, and is_popular as the binary target variable 
+rf_model_2 <- randomForest(is_popular ~ ., data = log_training_data_2, ntree = 500) # https://cran.r-project.org/web/packages/randomForest/randomForest.pdf was used to understand Random Forest and implement the code
+rf_model_2
+```
+
+## Evaluating the logistic regression classification model with 46 variables
+
+```{r}
+log_prob <- predict(logistic_reg_model, newdata = log_testing_data, type="response")
+log_pred <- ifelse(log_prob>0.5, "1", "0")
+log_pred<-as.factor(log_pred)
+confusionMatrix(log_pred, log_testing_data$is_popular) # https://stackoverflow.com/questions/46028360/confusionmatrix-for-logistic-regression-in-r was referenced to make the confusion matrix
+```
+
+## Evaluating the logistic regression classification model with values from XGBoost
+
+```{r}
+log_prob_2 <- predict(logistic_reg_model_2, newdata = log_testing_data_2, type="response")
+log_pred_2 <- ifelse(log_prob_2>0.5, "1", "0")
+log_pred_2<-as.factor(log_pred_2)
+confusionMatrix(log_pred_2, log_testing_data_2$is_popular) # https://stackoverflow.com/questions/46028360/confusionmatrix-for-logistic-regression-in-r was referenced to make the confusion matrix
+```
+
+## Evaluating the random forest model with 46 variables
+
+```{r}
+rf_model
+# sensitivity: TP/(TP+FN)
+# specificity: TN/(TN+FP)
+library(pROC)
+rf_predictions<- predict(rf_model, newdata = log_testing_data, type = "response")
+rf_predictions<- as.numeric(rf_predictions)
+roc_obj <- roc(log_testing_data$is_popular, rf_predictions) # https://cran.r-project.org/web/packages/pROC/pROC.pdf was referenced for this chunk of code
+rf_sens<- coords(roc_obj, "best", ret = "sensitivity")
+rf_spec<- coords(roc_obj, "best", ret = "specificity")
+rf_sens
+rf_spec
+```
+
+## Evaluating the random forest model with 9 independent variables suggested by XGBoost
+
+```{r}
+# Evaluating the random forest model with features suggested by XGBoost
+rf_model_2
+rf_predictions_2<- predict(rf_model_2, newdata = log_testing_data_2, type = "response")
+rf_predictions_2<- as.numeric(rf_predictions_2)
+roc_obj_2 <- roc(log_testing_data_2$is_popular, rf_predictions_2) # https://cran.r-project.org/web/packages/pROC/pROC.pdf was referenced for this chunk of code
+rf_sens_2<- coords(roc_obj_2, "best", ret = "sensitivity")
+rf_spec_2<- coords(roc_obj_2, "best", ret = "specificity")
+rf_sens_2
+rf_spec_2
+```
+
+# Benchmarking and comparing models
+
+## Developing a Naive Bayes model for benchmarking
+
+```{r}
+nb_model_1 <- naiveBayes(is_popular ~ ., data = log_training_data)
+nb_model_2 <- naiveBayes(is_popular ~ ., data = log_training_data_2)
+
+nb_predictions_1 <- predict(nb_model_1, newdata = log_testing_data)
+nb_predictions_2 <- predict(nb_model_2, newdata = log_testing_data_2)
+
+confusionMatrix(nb_predictions_1, log_testing_data$is_popular) # confusion matrix for Naive Bayes model with 47 variables
+
+confusionMatrix(nb_predictions_2, log_testing_data_2$is_popular) # confusion matrix for Naive Bayes model with 9 variables suggested by XGBoost
+
+```
+
+## Comparing Naive Bayes model 1 with classification models with 46 variables
+
+```{r}
+
+model_comparison_1<- data.frame(
+  Model = c("Naive Bayes", "Logistic Reg", "Random Forest"),
+  Accuracy = c(0.3381, 0.7062, 0.7182),      
+  Sensitivity = c(0.9581, 0.2627, 0.9214),      
+  Specificity = c(0.0624, 0.9034, 0.2627	))
+model_comparison_1
+```
+
+## Comparing Naive Bayes model 2 with classification models with 9 variables
+
+```{r}
+model_comparison_2<- data.frame(
+  Model = c("Naive Bayes", "Logistic Reg", "Random Forest"),
+  Accuracy = c(0.5523, 0.6862, 0.6972),      
+  Sensitivity = c(0.6431, 0.0383, 0.9049),      
+  Specificity = c(0.5107, 0.98286, 0.2465	))
+model_comparison_2
+```
+
+# Evaluation and Conclusion
+
+My primary objective with these two models was to obtain a good sensitivity value. Sensitivity is a model's ability to correctly predict a 'success', or popular article in this case. In this context, maximizing sensitivity is important as we want to ensure that popular articles can be accurately identified. The other 2 metrics assessed were specificity and accuracy. Specificity is the model's ability to correctly identify a failure, and accuracy is the fraction of the model's correct predictions.
+
+In both comparisons (using 46 variables, and 9 variables), the Random Forest and the Logistic Regression models outperform Naive Bayes in terms of accuracy. I will focus on the model with 9 variables, as this simpler model will be less prone to overfitting.
+
+Considering the models developed using 9 features, Random Forest outperforms the other 2 models in terms of accuracy, and more importantly, sensitivity. In context, a sensitivity of 0.9049 means that an estimated 90.49% of the articles that are genuinely popular are correctly classified as popular by the model. Thus, the model likely won't miss out on many popular articles, and Mashable will be able to benefit from the higher amount of revenue generated for each additional share.
+
+For this reason, I recommend the Random Forest model to be used to select articles.
